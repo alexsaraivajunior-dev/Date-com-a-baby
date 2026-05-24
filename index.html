@@ -1,4 +1,4 @@
- <!doctype html>
+<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
@@ -938,6 +938,7 @@
                 </div>
                 <div class="editor-actions">
                   <button class="btn btn-primary" onclick="connectSupabase()">Conectar nuvem</button>
+                  <button class="btn btn-ghost" onclick="testSupabaseConnection()" style="color:var(--ink);border-color:#eadbd1">Testar conexão</button>
                   <button class="btn btn-ghost" onclick="importDatesToCloud()" style="color:var(--ink);border-color:#eadbd1">Enviar meus dates</button>
                   <button class="btn btn-ghost" onclick="loadDatesFromCloud()" style="color:var(--ink);border-color:#eadbd1">Baixar da nuvem</button>
                   <span class="muted" id="cloudStatus">Nuvem ainda não conectada.</span>
@@ -1078,11 +1079,41 @@
           return;
         }
 
+        if (!url.startsWith("https://") || !url.endsWith(".supabase.co")) {
+          setCloudStatus("URL invalida. Ela precisa terminar com .supabase.co");
+          return;
+        }
+
         supabaseClient = window.supabase.createClient(url, key);
         cloudReady = true;
         saveCloudConfig(url, key);
         setCloudStatus("Conectado. Agora clique em Enviar meus dates.");
         subscribeToCloudChanges();
+      }
+
+      async function testSupabaseConnection() {
+        if (!cloudReady) {
+          await connectSupabase();
+        }
+
+        if (!cloudReady) return;
+
+        try {
+          const { error } = await supabaseClient
+            .from("couple_dates")
+            .select("id")
+            .eq("couple_code", coupleCode)
+            .limit(1);
+
+          if (error) {
+            setCloudStatus("Erro no Supabase: " + error.message);
+            return;
+          }
+
+          setCloudStatus("Conexao OK. Pode enviar os dates.");
+        } catch (error) {
+          setCloudStatus("Falha de rede. Confira URL, chave e se a tabela foi criada.");
+        }
       }
 
       async function importDatesToCloud() {
@@ -1102,13 +1133,18 @@
           romance: Number(date.romance) || 80,
           done: Boolean(date.done),
           image: date.image || "",
-          photos: date.photos || [],
+          photos: [],
           updated_at: new Date().toISOString()
         }));
 
-        const { error } = await supabaseClient.from("couple_dates").upsert(payload);
-        if (error) {
-          setCloudStatus("Erro ao enviar: " + error.message);
+        try {
+          const { error } = await supabaseClient.from("couple_dates").upsert(payload);
+          if (error) {
+            setCloudStatus("Erro ao enviar: " + error.message);
+            return;
+          }
+        } catch (error) {
+          setCloudStatus("Falha de rede. Teste a conexao e confira URL/chave.");
           return;
         }
         setCloudStatus("Dates enviados para a nuvem.");
@@ -1165,7 +1201,7 @@
           romance: Number(date.romance) || 80,
           done: Boolean(date.done),
           image: date.image || "",
-          photos: date.photos || [],
+          photos: [],
           updated_at: new Date().toISOString()
         });
       }
