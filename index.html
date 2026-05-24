@@ -1,9 +1,10 @@
-<!doctype html>
+ <!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Date com a Princesa</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
       :root {
         --ink: #140f12;
@@ -563,7 +564,8 @@
 
       .editor input,
       .editor textarea,
-      .editor select {
+      .editor select,
+      .cloud-box input {
         width: 100%;
         border: 1px solid #eadbd1;
         border-radius: 16px;
@@ -587,6 +589,22 @@
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
+      }
+
+      .cloud-box {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+        padding: 16px;
+        border-radius: 24px;
+        background: #fff8f2;
+        border: 1px solid #f1e4da;
+      }
+
+      .cloud-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
       }
 
       .danger {
@@ -655,7 +673,8 @@
       body.dark .goal,
       body.dark .calendar span,
       body.dark .editor,
-      body.dark .empty-state {
+      body.dark .empty-state,
+      body.dark .cloud-box {
         color: #fff8f1;
         background: rgba(255,255,255,.06);
         border-color: rgba(255,255,255,.1);
@@ -731,6 +750,7 @@
         .hero h1 { font-size: 48px; }
         .landing-grid, .grid-4, .dates, .trips-recipes { grid-template-columns: 1fr; }
         .editor { grid-template-columns: 1fr; }
+        .cloud-row { grid-template-columns: 1fr; }
         .editor .wide { grid-column: auto; }
         .landing-grid { margin-top: -44px; }
         .shell { margin: 34px 10px 90px; border-radius: 28px; padding: 8px; }
@@ -908,6 +928,21 @@
                   <p class="muted" id="copyStatus" style="margin-top:10px"></p>
                 </article>
               </div>
+              <div class="cloud-box">
+                <span class="kicker">Conectar Supabase</span>
+                <h2 class="display">Sincronizar os dates entre os dois celulares</h2>
+                <p class="muted">Cole aqui a URL e a anon key do Supabase. Depois clique em conectar e importar seus dates para a nuvem.</p>
+                <div class="cloud-row">
+                  <input id="supabaseUrl" placeholder="NEXT_PUBLIC_SUPABASE_URL" />
+                  <input id="supabaseKey" placeholder="NEXT_PUBLIC_SUPABASE_ANON_KEY" />
+                </div>
+                <div class="editor-actions">
+                  <button class="btn btn-primary" onclick="connectSupabase()">Conectar nuvem</button>
+                  <button class="btn btn-ghost" onclick="importDatesToCloud()" style="color:var(--ink);border-color:#eadbd1">Enviar meus dates</button>
+                  <button class="btn btn-ghost" onclick="loadDatesFromCloud()" style="color:var(--ink);border-color:#eadbd1">Baixar da nuvem</button>
+                  <span class="muted" id="cloudStatus">Nuvem ainda não conectada.</span>
+                </div>
+              </div>
               <div class="grid-4" style="margin-top:16px">
                 <article class="stat"><b>1</b><span>Publicar na Vercel</span></article>
                 <article class="stat"><b>2</b><span>Conectar Supabase</span></article>
@@ -935,8 +970,12 @@
     </nav>
     <script>
       const storageKey = "date-com-a-princesa-dates-v2";
+      const cloudKey = "date-com-a-princesa-supabase";
+      const coupleCode = "PRINCESA-1248";
       let editingDateId = null;
       let dates = loadDates();
+      let supabaseClient = null;
+      let cloudReady = false;
 
       function toggleTheme() {
         document.body.classList.toggle("dark");
@@ -1000,6 +1039,150 @@
 
       function saveDates() {
         localStorage.setItem(storageKey, JSON.stringify(dates));
+      }
+
+      function saveCloudConfig(url, key) {
+        localStorage.setItem(cloudKey, JSON.stringify({ url, key }));
+      }
+
+      function loadCloudConfig() {
+        try {
+          return JSON.parse(localStorage.getItem(cloudKey) || "null");
+        } catch {
+          return null;
+        }
+      }
+
+      function setCloudStatus(message) {
+        const status = document.getElementById("cloudStatus");
+        if (status) status.textContent = message;
+      }
+
+      function bootSupabaseFromSavedConfig() {
+        const config = loadCloudConfig();
+        if (!config || !config.url || !config.key || !window.supabase) return;
+        document.getElementById("supabaseUrl").value = config.url;
+        document.getElementById("supabaseKey").value = config.key;
+        supabaseClient = window.supabase.createClient(config.url, config.key);
+        cloudReady = true;
+        setCloudStatus("Nuvem conectada. Sincronizacao ativada.");
+        subscribeToCloudChanges();
+        loadDatesFromCloud();
+      }
+
+      async function connectSupabase() {
+        const url = document.getElementById("supabaseUrl").value.trim();
+        const key = document.getElementById("supabaseKey").value.trim();
+        if (!url || !key) {
+          setCloudStatus("Preencha a URL e a anon key.");
+          return;
+        }
+
+        supabaseClient = window.supabase.createClient(url, key);
+        cloudReady = true;
+        saveCloudConfig(url, key);
+        setCloudStatus("Conectado. Agora clique em Enviar meus dates.");
+        subscribeToCloudChanges();
+      }
+
+      async function importDatesToCloud() {
+        if (!cloudReady) {
+          setCloudStatus("Conecte a nuvem primeiro.");
+          return;
+        }
+
+        const payload = dates.map((date) => ({
+          id: date.id,
+          couple_code: coupleCode,
+          title: date.title,
+          description: date.description || "",
+          category: date.category || "",
+          cost: date.cost || "",
+          location: date.location || "",
+          romance: Number(date.romance) || 80,
+          done: Boolean(date.done),
+          image: date.image || "",
+          photos: date.photos || [],
+          updated_at: new Date().toISOString()
+        }));
+
+        const { error } = await supabaseClient.from("couple_dates").upsert(payload);
+        if (error) {
+          setCloudStatus("Erro ao enviar: " + error.message);
+          return;
+        }
+        setCloudStatus("Dates enviados para a nuvem.");
+      }
+
+      async function loadDatesFromCloud() {
+        if (!cloudReady) {
+          setCloudStatus("Conecte a nuvem primeiro.");
+          return;
+        }
+
+        const { data, error } = await supabaseClient
+          .from("couple_dates")
+          .select("*")
+          .eq("couple_code", coupleCode)
+          .order("updated_at", { ascending: false });
+
+        if (error) {
+          setCloudStatus("Erro ao baixar: " + error.message);
+          return;
+        }
+
+        if (data && data.length) {
+          dates = data.map((item) => ({
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            category: item.category,
+            cost: item.cost,
+            location: item.location,
+            romance: item.romance,
+            done: item.done,
+            image: item.image,
+            photos: item.photos || []
+          }));
+          saveDates();
+          renderDates();
+          setCloudStatus("Dates baixados da nuvem.");
+        } else {
+          setCloudStatus("Nuvem vazia. Clique em Enviar meus dates.");
+        }
+      }
+
+      async function upsertDateToCloud(date) {
+        if (!cloudReady) return;
+        await supabaseClient.from("couple_dates").upsert({
+          id: date.id,
+          couple_code: coupleCode,
+          title: date.title,
+          description: date.description || "",
+          category: date.category || "",
+          cost: date.cost || "",
+          location: date.location || "",
+          romance: Number(date.romance) || 80,
+          done: Boolean(date.done),
+          image: date.image || "",
+          photos: date.photos || [],
+          updated_at: new Date().toISOString()
+        });
+      }
+
+      async function deleteDateFromCloud(id) {
+        if (!cloudReady) return;
+        await supabaseClient.from("couple_dates").delete().eq("id", id).eq("couple_code", coupleCode);
+      }
+
+      function subscribeToCloudChanges() {
+        if (!cloudReady || !supabaseClient) return;
+        supabaseClient
+          .channel("couple-dates-" + coupleCode)
+          .on("postgres_changes", { event: "*", schema: "public", table: "couple_dates", filter: `couple_code=eq.${coupleCode}` }, () => {
+            loadDatesFromCloud();
+          })
+          .subscribe();
       }
 
       function escapeHtml(value) {
@@ -1087,6 +1270,7 @@
 
         dates = dates.filter((item) => item.id !== id);
         saveDates();
+        deleteDateFromCloud(id);
         renderDates();
         resetDateForm();
       }
@@ -1094,6 +1278,8 @@
       function toggleDone(id) {
         dates = dates.map((date) => date.id === id ? { ...date, done: !date.done } : date);
         saveDates();
+        const changed = dates.find((date) => date.id === id);
+        if (changed) upsertDateToCloud(changed);
         renderDates();
       }
 
@@ -1112,6 +1298,8 @@
             return { ...date, photos: [...(date.photos || []), ...photos].slice(-16) };
           });
           saveDates();
+          const changed = dates.find((date) => date.id === id);
+          if (changed) upsertDateToCloud(changed);
           renderDates();
         });
       }
@@ -1122,6 +1310,8 @@
           return { ...date, photos: (date.photos || []).filter((_, index) => index !== photoIndex) };
         });
         saveDates();
+        const changed = dates.find((date) => date.id === id);
+        if (changed) upsertDateToCloud(changed);
         renderDates();
       }
 
@@ -1141,9 +1331,13 @@
 
         if (editingDateId) {
           dates = dates.map((date) => date.id === editingDateId ? { ...date, ...payload } : date);
+          const changed = dates.find((date) => date.id === editingDateId);
+          if (changed) upsertDateToCloud(changed);
           document.getElementById("dateStatus").textContent = "Date atualizado com sucesso.";
         } else {
-          dates = [{ id: crypto.randomUUID(), done: false, photos: [], ...payload }, ...dates];
+          const newDate = { id: crypto.randomUUID(), done: false, photos: [], ...payload };
+          dates = [newDate, ...dates];
+          upsertDateToCloud(newDate);
           document.getElementById("dateStatus").textContent = "Date adicionado com sucesso.";
         }
 
@@ -1173,6 +1367,7 @@
       }
 
       renderDates();
+      bootSupabaseFromSavedConfig();
     </script>
   </body>
 </html>
